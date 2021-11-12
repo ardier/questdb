@@ -29,9 +29,31 @@ import org.junit.Test;
 
 public class SqlParserUpdateTest extends AbstractSqlParserTest {
     @Test
-    public void testTimestampWithTimezoneConstPrefixInsideCast() throws Exception {
-        assertUpdate("",
-                "update x set tt = t where t > '2005-04-02 12:00:00-07'",
+    public void testUpdateSingleTableWithWhere() throws Exception {
+        assertUpdate("update x set tt = t where t > '2005-04-02T12:00:00'",
+                "update x set tt = t where t > '2005-04-02T12:00:00'",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testUpdateSingleTableToConst() throws Exception {
+        assertUpdate("update x set tt = 1",
+                "update x set tt = 1",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testUpdateSingleTableWithAlias() throws Exception {
+        assertUpdate("update tblx as x set tt = 1 where x.t = NULL",
+                "update tblx x set tt = 1 WHERE x.t = NULL",
+                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testUpdateSingleTableWithJoinInFrom() throws Exception {
+        assertUpdate("update tblx as x set tt = 1 from tbly y where x.x = y.y and x > 10",
+                "update tblx set tt = 1 from tbly y where x = y and x > 10",
+                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
     }
 }

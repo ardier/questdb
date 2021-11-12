@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -873,34 +876,37 @@ public final class SqlParser {
         final int modelPosition = lexer.getPosition();
 
         UpdateModel updateModel = this.updateModelPool;
-        updateModel.setModelPosition(modelPosition);
+        QueryModel fromModel = queryModelPool.next();
+        fromModel.setModelPosition(modelPosition);
+
         if (withClauses != null) {
-            updateModel.addWithClauses(withClauses);
+            fromModel.addWithClauses(withClauses);
         }
 
         tok = tok(lexer, "UPDATE, WITH or table name expected");
 
         if (isWithKeyword(tok)) {
-            parseWithClauses(lexer, updateModel);
+            parseWithClauses(lexer, fromModel);
             tok = tok(lexer, "SELECT or table name expected");
         }
 
+        QueryModel nestedModel = fromModel;
+
         // [update]
         if (isUpdateKeyword(tok)) {
-            parseUpdateClause(lexer, updateModel);
-
-            QueryModel nestedModel = queryModelPool.next();
-            nestedModel.setModelPosition(modelPosition);
+            parseUpdateClause(lexer, updateModel, fromModel);
 
             tok = optTok(lexer);
             if (tok != null && isFromKeyword(tok)) {
-                // [from]
-                parseSelectFrom(lexer, nestedModel, updateModel);
-                tok = setModelAliasAndTimestamp(lexer, nestedModel);
 
-                // expect multiple [[inner | outer | cross] join]
+                // [from]
+                nestedModel = queryModelPool.next();
+                fromModel.setNestedModel(nestedModel);
+
+                tok = ","; // FROM in Postgres UPDATE statement means cross join
                 int joinType;
                 while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
+                    // expect multiple [[inner | outer | cross] join]
                     nestedModel.addJoinModel(parseJoin(lexer, tok, joinType, updateModel));
                     tok = optTok(lexer);
                 }
@@ -910,40 +916,54 @@ public final class SqlParser {
 
             // expect [where]
             if (tok != null && isWhereKeyword(tok)) {
-                ExpressionNode expr = expr(lexer, nestedModel);
+                ExpressionNode expr = expr(lexer, fromModel);
                 if (expr != null) {
                     nestedModel.setWhereClause(expr);
-                    tok = optTok(lexer);
                 } else {
                     throw SqlException.$((lexer.lastTokenPosition()), "empty where clause");
                 }
             }
 
-            updateModel.setFromModel(nestedModel);
-            final ExpressionNode n = nestedModel.getAlias();
-            if (n != null) {
-                updateModel.setAlias(n);
-            }
+            updateModel.setFromModel(fromModel);
         }
         return updateModel;
     }
 
-    private void parseUpdateClause(GenericLexer lexer, UpdateModel updateModel) throws SqlException {
+    private void parseUpdateClause(GenericLexer lexer, UpdateModel updateModel, QueryModel nestedModel) throws SqlException {
         CharSequence tok = tok(lexer, "table name or alias");
-        updateModel.withTableName(tok);
+        CharSequence tableName = GenericLexer.immutableOf(tok);
+        updateModel.withTableName(tableName);
+        nestedModel.setTableName(ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0));
 
         while (true) {
-            tok = tok(lexer, "set");
+            tok = tok(lexer, "AS, SET or table alias expected");
+            if (isAsKeyword(tok)) {
+                tok = tok(lexer, "table alias expected");
+                if (isSetKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "table alias expected");
+                }
+            }
+
+            if (!isAsKeyword(tok) && !isSetKeyword(tok)) {
+                // This is table alias
+                CharSequence tableAlias = GenericLexer.immutableOf(tok);
+                updateModel.setAlias(tableAlias);
+                tok = tok(lexer, "SET expected");
+            }
+
             if (!isSetKeyword(tok)) {
-                throw SqlException.$(lexer.getPosition(), "expected SET keyword");
+                throw SqlException.$(lexer.lastTokenPosition(), "SET expected");
             }
 
             CharSequence col = GenericLexer.immutableOf(GenericLexer.unquote(tok(lexer, "column name")));
             expectTok(lexer, "=");
             ExpressionNode expr = expr(lexer, (QueryModel) null);
-            updateModel.withSet(col, expr);
 
-            tok = tok(lexer, "separator, EOF");
+            QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
+            updateModel.withSet(col, expr);
+            nestedModel.addBottomUpColumn(valueColumn);
+
+            tok = optTok(lexer);
             if (tok == null) {
                 break;
             }

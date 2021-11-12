@@ -26,13 +26,25 @@ package io.questdb.griffin.model;
 
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
 public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseModel, Sinkable {
+    private CharSequence updateTableAlias;
+    private final ObjList<CharSequence> updatedColumns = new ObjList<>();
+    private final ObjList<ExpressionNode> updateColumnExpressions = new ObjList<>();
+    private QueryModel fromModel;
+    private int position;
+    private CharSequence updateTableName;
+
     @Override
     public void addWithClause(CharSequence token, WithClauseModel wcm) {
 
+    }
+
+    public QueryModel getQueryModel() {
+        return fromModel;
     }
 
     @Override
@@ -51,7 +63,10 @@ public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseMode
 
     @Override
     public void clear() {
-
+        updatedColumns.clear();
+        updateColumnExpressions.clear();
+        updateTableName = null;
+        updateTableAlias = null;
     }
 
     @Override
@@ -59,27 +74,60 @@ public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseMode
         return UPDATE;
     }
 
-    public void setAlias(ExpressionNode updateTableAlias) {
-
+    public void setAlias(CharSequence updateTableAlias) {
+        this.updateTableAlias = updateTableAlias;
     }
 
     public void setModelPosition(int position) {
-
+        this.position = position;
     }
 
     public void setFromModel(QueryModel nestedModel) {
+        for (int i = 0, n = updatedColumns.size(); i < n; i++) {
+            nestedModel.setSelectModelType(QueryModel.SELECT_MODEL_CURSOR);
+        }
+        this.fromModel = nestedModel;
     }
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("update");
+        sink.put("update ").put(this.updateTableName);
+        if (this.updateTableAlias != null) {
+            sink.put(" as ").put(this.updateTableAlias);
+        }
+        sink.put(" set ");
+        for (int i = 0, n = updatedColumns.size(); i < n; i++) {
+            sink.put(updatedColumns.get(i)).put(" = ");
+            sink.put(updateColumnExpressions.get(i));
+            if (i < n - 1) {
+                sink.put(',');
+            }
+        }
+        fromModel.toSink(sink);
+//        if (fromModel != null) {
+//            if (fromModel.getJoinModels().size() > 1) {
+//                sink.put(" from ");
+//                fromModel.toSink(sink);
+////                // First item is the table itself
+////                for(int i = 1, n = fromModel.getJoinModels().size(); i < n; i++) {
+////                    int modelIndex = fromModel.getOrderedJoinModels().get(i);
+////                    QueryModel queryModel = fromModel.getJoinModels().get(modelIndex);
+////                    queryModel.toSink(sink);
+////                }
+//            }
+//            if (fromModel.getWhereClause() != null) {
+//                sink.put(" where ");
+//                sink.put(fromModel.getWhereClause());
+//            }
+//        }
     }
 
     public void withSet(CharSequence col, ExpressionNode expr) {
-
+        this.updatedColumns.add(col);
+        this.updateColumnExpressions.add(expr);
     }
 
     public void withTableName(CharSequence tableName) {
-
+        this.updateTableName = tableName;
     }
 }
