@@ -2149,7 +2149,8 @@ public class SqlCompiler implements Closeable {
     }
 
     // this exposed for testing only
-    ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
+    // TODO revert public modifier
+    public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
         return parser.expr(lexer, model);
